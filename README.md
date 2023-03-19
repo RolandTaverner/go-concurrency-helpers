@@ -22,14 +22,14 @@ So in producer you can't modify shared data (and usually you do not need), in co
 `batch.Batch` is intended to process data in batches.
 
 General use of `batch.Batch` looks like this:
-```
+```go
     data := make([]SomeData)
     // fill data ...
     
 	batchErr := batch.New(uint(len(data)), 10 /*batch size*/, time.Second).Do(ctx,
 		func(ctx context.Context, batch batch.Range) (interface{}, error) {
 			for _, dataElement := range data[batch.From : batch.From+batch.Count] {
-				// process dataElement
+                // process dataElement
 			}
 			result := &MyBatchResultType{}
             // fill batch result ...
@@ -45,7 +45,7 @@ General use of `batch.Batch` looks like this:
 		},
 	)
 	if batchErr != nil {
-	    // handle error
+        // handle error
 	}
 ```
 
@@ -104,7 +104,73 @@ func BatchProcessExample() {
 ### Example 2
 
 This is more real-life example. Assume you have remote service that accepts array of item IDs and returns items.
-The service limits count of items in single request by, for example, 10, while you have more.
+The service limits count of items in single request by, for example, 10, while you want more.
+So we make parallel requests to service with up to 10 items in each request.
+
+```go
+func BatchProcessRemoteCallExample() {
+	ctx := context.Background()
+	remoteItemService := &itemServiceMock{}
+
+	// Mock data
+	itemIDs := make([]int, 0, 123)
+	for i := 0; i < 100; i++ {
+		itemIDs[i] = i
+	}
+
+	itemsMap := make(map[int]Item)
+
+	batchErr := batch.New(uint(len(itemIDs)), 10, time.Second).Do(ctx,
+		func(ctx context.Context, batch batch.Range) (interface{}, error) {
+			itemsToQuery := itemIDs[batch.From : batch.From+batch.Count]
+			return remoteItemService.GetItems(ctx, itemsToQuery)
+		},
+		func(ctx context.Context, batchRange batch.Range, batchResult interface{}, err error) {
+			items, ok := batchResult.([]Item)
+			if !ok {
+				panic("unexpected error - producer return type should be []Item")
+			}
+			// Here we can check which items were not returned by service and log this, for example
+			expectedItemIDs := itemIDs[batchRange.From : batchRange.From+batchRange.Count]
+			// ...
+
+			// Batch consumers executed in the same goroutine - so we can modify shared data, no need to synchronize here
+			for _, i := range items {
+				itemsMap[i.ID] = i
+			}
+		},
+	)
+	if batchErr != nil {
+		fmt.Printf(batchErr.Error())
+	}
+
+	// Here we have itemsMap filled
+	// Some requests may fail or time out, so it may contain fewer items than requested
+}
+
+type Item struct {
+	ID       int
+	ItemData string
+}
+
+type itemServiceMock struct {
+}
+
+// GetItems returns items by IDs. 10 is the max items IDs in single request
+// Assume it calls remote service which has such limitations
+func (s *itemServiceMock) GetItems(ctx context.Context, itemIDs []int) ([]Item, error) {
+	if len(itemIDs) > 10 {
+		return nil, errors.New("bad request: limit exceeded")
+	}
+
+	// Return mock data
+	result := make([]Item, 0, len(itemIDs))
+	for _, id := range itemIDs {
+		result = append(result, Item{ID: id, ItemData: strconv.FormatInt(int64(id), 10)})
+	}
+	return result, nil
+}
+```
 
 ## Collector
 
