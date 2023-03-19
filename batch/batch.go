@@ -9,7 +9,7 @@ import (
 var (
 	ErrEmptyBatch = errors.New("empty batch")
 	ErrTimedOut   = errors.New("request timed out")
-	ErrUnexpected = errors.New("unexpected channel close")
+	ErrUnexpected = errors.New("unexpected channel close") // Should never happen
 )
 
 type Range struct {
@@ -31,6 +31,10 @@ type Batch struct {
 	Timeout    time.Duration
 }
 
+// New creates and returns batch instance
+// totalCount - total elements count
+// batchSize - desired elements count in single batch. Size of the last batch = totalCount % batchSize (if totalCount % batchSize != 0)
+// timeout - amount of time Batch will wait for producer
 func New(totalCount uint, batchSize uint, timeout time.Duration) *Batch {
 	return &Batch{
 		TotalCount: totalCount,
@@ -39,6 +43,11 @@ func New(totalCount uint, batchSize uint, timeout time.Duration) *Batch {
 	}
 }
 
+// Do runs goroutines for every batch, waits for producer's completion, then runs consumers
+// ctx - context
+// batchExecutor - function that accepts batch range and executes work
+// batchProcessor - function that accepts single batch results
+// Do returns error if 1 or more executors were not completed in time. In this case processors for timed out executors do not called,
 func (b *Batch) Do(ctx context.Context, batchExecutor Executor, batchProcessor Processor) error {
 	if b.TotalCount == 0 {
 		return ErrEmptyBatch
